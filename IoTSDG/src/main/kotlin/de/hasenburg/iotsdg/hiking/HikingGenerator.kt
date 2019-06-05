@@ -23,13 +23,13 @@ private val brokerAreas = listOf(Geofence.circle(Location(50.106732, 8.663124), 
         Geofence.circle(Location(36.843381, -76.275892), 5.0))
 private val clientsPerBrokerArea = listOf(1000, 750, 1000)
 
-// -------- Geofences --------
-private val roadConditionSubscriptionGeofenceDiameter = 0.5 * KM_TO_DEG
-private val roadConditionMessageGeofenceDiameter = 0.5 * KM_TO_DEG
-private val minTextBroadcastSubscriptionGeofenceDiameter = 1.0 * KM_TO_DEG
-private val maxTextBroadcastSubscriptionGeofenceDiameter = 50.0 * KM_TO_DEG
-private val minTextBroadcastMessageGeofenceDiameter = 1.0 * KM_TO_DEG
-private val maxTextBroadcastMessageGeofenceDiameter = 50.0 * KM_TO_DEG
+// -------- Geofences -------- values are in degree
+private const val roadConditionSubscriptionGeofenceDiameter = 0.5 * KM_TO_DEG
+private const val roadConditionMessageGeofenceDiameter = 0.5 * KM_TO_DEG
+private const val minTextBroadcastSubscriptionGeofenceDiameter = 1.0 * KM_TO_DEG
+private const val maxTextBroadcastSubscriptionGeofenceDiameter = 50.0 * KM_TO_DEG
+private const val minTextBroadcastMessageGeofenceDiameter = 1.0 * KM_TO_DEG
+private const val maxTextBroadcastMessageGeofenceDiameter = 50.0 * KM_TO_DEG
 
 // -------- Messages  --------
 private const val roadConditionPublicationProbability = 10 // %
@@ -86,6 +86,10 @@ fun main() {
     }
     dir.mkdirs()
 
+    val setup = getSetupString()
+    logger.info(setup)
+    File("$directoryPath/00_summary.txt").writeText(setup)
+
     for (b in 0..2) {
         // pick a broker
         val broker = getBrokerTriple(b)
@@ -104,7 +108,7 @@ fun main() {
             var location = Location.randomInGeofence(broker.second)
             var lastUpdatedLocation = location // needed to determine if subscription should be updated
             var timestamp = 0
-            val file = File("${directoryPath}/${broker.first}_${clientName}.csv")
+            val file = File("$directoryPath/${broker.first}_$clientName.csv")
             val writer = file.bufferedWriter()
 
             // this geofence is only calculated once per client
@@ -129,7 +133,7 @@ fun main() {
 
                 val travelTime = Random.nextInt(minTravelTime, maxTravelTime)
                 location = calculateNextLocation(broker.second, location, travelTime, clientDirection)
-                timestamp = timestamp + travelTime
+                timestamp += travelTime
             }
 
             writer.flush()
@@ -143,13 +147,30 @@ fun main() {
     Number of subscribe messages: $numberOfSubscribeMessages (${numberOfSubscribeMessages / timeToRunPerClient} messages/s)
     Number of publish messages: $numberOfPublishedMessages (${numberOfPublishedMessages / timeToRunPerClient} messages/s)
     Publish payload size: ${totalPayloadSize / 1000.0} KB (${totalPayloadSize / numberOfPublishedMessages} byte/message)
-    Client distance travelled: ${clientDistanceTravelled}km (${distancePerClient} km/client)
+    Client distance travelled: ${clientDistanceTravelled}km ($distancePerClient km/client)
     Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
-    Number of subscription geofence broker overlaps: ${numberOfOverlappingSubscriptionGeofences}
-    Number of message geofence broker overlaps: ${numberOfOverlappingMessageGeofences}"""
+    Number of subscription geofence broker overlaps: $numberOfOverlappingSubscriptionGeofences
+    Number of message geofence broker overlaps: $numberOfOverlappingMessageGeofences"""
 
     logger.info(output)
-    File("$directoryPath/00_summary.txt").writeText(output)
+    File("$directoryPath/00_summary.txt").appendText(output)
+}
+
+fun getSetupString(): String {
+    // there should be another solution in the future: https://stackoverflow.com/questions/33907095/kotlin-how-can-i-use-reflection-on-packages
+    val c = Class.forName("de.hasenburg.iotsdg.hiking.HikingGeneratorKt")
+    val stringBuilder = java.lang.StringBuilder("Setup:\n")
+
+    for (field in c.declaredFields) {
+        if (field.name.contains("logger") || field.name.contains("numberOf") || field.name.contains("clientDistanceTravelled") || field.name.contains(
+                        "totalPayloadSize")) {
+
+        } else {
+            stringBuilder.append("\t").append(field.name).append(": ").append(field.get(c)).append("\n")
+        }
+    }
+    return stringBuilder.toString()
+
 }
 
 fun checkSubscriptionGeofenceBrokerOverlap(geofence: Geofence) {
@@ -195,7 +216,7 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTi
 
         // in case we are at the edge of a geofence, we need to relax it a little bit otherwise this will be an
         // infinite loop
-        relaxFactor = relaxFactor + 1.0
+        relaxFactor += 1.0
 
         if (relaxFactor > 30) {
             // let's go back by 180 degree
@@ -207,7 +228,7 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTi
 
         // only stop when we found the next location
         if (brokerGeofence.contains(nextLocation)) {
-            clientDistanceTravelled = clientDistanceTravelled + distance
+            clientDistanceTravelled += distance
             return nextLocation
         }
     }
