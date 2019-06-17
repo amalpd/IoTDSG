@@ -17,12 +17,16 @@ private const val minTravelTime = 5 // sec
 private const val maxTravelTime = 10 // sec
 
 // -------- Brokers --------
-private val brokerNames = listOf("Frankfurt", "Paris", "Norfolk")
+//private val brokerNames = listOf("Frankfurt", "Paris", "Norfolk")
+private val brokerNames = listOf("Frankfurt" , "Paris", "Norfolk")
 private val brokerAreas = listOf(Geofence.circle(Location(50.106732, 8.663124), 2.1),
         Geofence.circle(Location(48.877366, 2.359708), 2.1),
         Geofence.circle(Location(36.843381, -76.275892), 5.0))
+// to split the workload evenly across multiple machines for a given broker
+private val workloadMachinePerBroker = listOf(2, 0, 0)
+private val clientsPerBrokerArea = listOf(500, 50, 50)
 //private val clientsPerBrokerArea = listOf(1000, 750, 1000)
-private val clientsPerBrokerArea = listOf(2, 2, 2)
+
 
 // -------- Geofences -------- values are in degree
 private const val roadConditionSubscriptionGeofenceDiameter = 0.5 * KM_TO_DEG
@@ -97,8 +101,17 @@ fun main() {
 
         logger.info("Calculating actions for broker ${broker.first}")
 
+        var currentWorkloadMachine: Int
+
         // loop through clients for broker
         for (c in 0..broker.third) {
+            // determine current workload machine
+            if (workloadMachinePerBroker.get(b) == 0) {
+                logger.info("Skipping actions for broker ${broker.first} as it does not have any workload machines")
+                break
+            }
+            currentWorkloadMachine = c % workloadMachinePerBroker.get(b)
+
             if ((100.0 * c / broker.third) % 5.0 == 0.0) {
                 logger.info("Finished ${100 * c / broker.third}%")
             }
@@ -109,7 +122,7 @@ fun main() {
             var location = Location.randomInGeofence(broker.second)
             var lastUpdatedLocation = location // needed to determine if subscription should be updated
             var timestamp = 0
-            val file = File("$directoryPath/${broker.first}_$clientName.csv")
+            val file = File("$directoryPath/${broker.first}-${currentWorkloadMachine}_$clientName.csv")
             val writer = file.bufferedWriter()
 
             // this geofence is only calculated once per client
