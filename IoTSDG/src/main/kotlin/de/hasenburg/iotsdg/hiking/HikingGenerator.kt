@@ -23,8 +23,8 @@ private val brokerAreas = listOf(Geofence.circle(Location(50.106732, 8.663124), 
         Geofence.circle(Location(48.877366, 2.359708), 2.1),
         Geofence.circle(Location(36.843381, -76.275892), 5.0))
 // to split the workload evenly across multiple machines for a given broker
-private val workloadMachinePerBroker = listOf(2, 0, 0)
-private val clientsPerBrokerArea = listOf(500, 50, 50)
+private val workloadMachinePerBroker = listOf(2, 1, 0)
+private val clientsPerBrokerArea = listOf(100, 100, 50)
 //private val clientsPerBrokerArea = listOf(1000, 750, 1000)
 
 
@@ -158,6 +158,7 @@ fun main() {
 
     val distancePerClient = clientDistanceTravelled / clientsPerBrokerArea.stream().mapToInt { it }.sum()
     val output = """Data set characteristics:
+    Broker Areas: $brokerAreas
     Number of ping messages: $numberOfPingMessages (${numberOfPingMessages / timeToRunPerClient} messages/s)
     Number of subscribe messages: $numberOfSubscribeMessages (${numberOfSubscribeMessages / timeToRunPerClient} messages/s)
     Number of publish messages: $numberOfPublishedMessages (${numberOfPublishedMessages / timeToRunPerClient} messages/s)
