@@ -18,12 +18,15 @@ private const val minTravelTime = 5 // sec
 private const val maxTravelTime = 10 // sec
 
 // -------- Brokers --------
-private val brokerNames = listOf("Frankfurt", "Paris", "Norfolk")
-private val brokerAreas = listOf(Geofence.circle(Location(50.106732, 8.663124), 2.1),
-        Geofence.circle(Location(48.877366, 2.359708), 2.1),
-        Geofence.circle(Location(36.843381, -76.275892), 5.0))
+private val brokerNames = listOf("Columbus", "Frankfurt", "Paris")
+private val brokerAreas = listOf(Geofence.circle(Location(-82.999083, 39.961332), 5.0),
+        Geofence.circle(Location(50.106732, 8.663124), 2.1),
+        Geofence.circle(Location(48.877366, 2.359708), 2.1))
+// to split the workload evenly across multiple machines for a given broker
+private val workloadMachinePerBroker = listOf(2, 2, 2)
+private val clientsPerBrokerArea = listOf(100, 100, 100)
 //private val clientsPerBrokerArea = listOf(1000, 750, 1000)
-private val clientsPerBrokerArea = listOf(2, 2, 2)
+
 
 // -------- Geofences -------- values are in degree
 private const val roadConditionSubscriptionGeofenceDiameter = 0.5 * KM_TO_DEG
@@ -98,8 +101,17 @@ fun main() {
 
         logger.info("Calculating actions for broker ${broker.first}")
 
+        var currentWorkloadMachine: Int
+
         // loop through clients for broker
         for (c in 0..broker.third) {
+            // determine current workload machine
+            if (workloadMachinePerBroker.get(b) == 0) {
+                logger.info("Skipping actions for broker ${broker.first} as it does not have any workload machines")
+                break
+            }
+            currentWorkloadMachine = c % workloadMachinePerBroker.get(b)
+
             if ((100.0 * c / broker.third) % 5.0 == 0.0) {
                 logger.info("Finished ${100 * c / broker.third}%")
             }
@@ -110,7 +122,7 @@ fun main() {
             var location = Location.randomInGeofence(broker.second)
             var lastUpdatedLocation = location // needed to determine if subscription should be updated
             var timestamp = 0
-            val file = File("$directoryPath/${broker.first}_$clientName.csv")
+            val file = File("$directoryPath/${broker.first}-${currentWorkloadMachine}_$clientName.csv")
             val writer = file.bufferedWriter()
 
             // this geofence is only calculated once per client
@@ -248,7 +260,7 @@ fun getHeader(): String {
 
 fun calculatePingActions(timestamp: Int, location: Location): String {
     numberOfPingMessages++
-    return "${timestamp*1000};${location.lat};${location.lon};ping;;;\n"
+    return "${timestamp * 1000};${location.lat};${location.lon};ping;;;\n"
 }
 
 fun calculateSubscribeActions(timestamp: Int, location: Location, geofenceTB: Geofence): String {
@@ -257,11 +269,11 @@ fun calculateSubscribeActions(timestamp: Int, location: Location, geofenceTB: Ge
     // road condition
     val geofenceRC = Geofence.circle(location, roadConditionSubscriptionGeofenceDiameter)
     checkSubscriptionGeofenceBrokerOverlap(geofenceRC)
-    actions.append("${timestamp*1000 + 1};${location.lat};${location.lon};subscribe;" + "$roadConditionTopic;${geofenceRC.wktString};\n")
+    actions.append("${timestamp * 1000 + 1};${location.lat};${location.lon};subscribe;" + "$roadConditionTopic;${geofenceRC.wktString};\n")
     numberOfSubscribeMessages++
 
     // text broadcast
-    actions.append("${timestamp*1000 + 2};${location.lat};${location.lon};subscribe;" + "$textBroadcastTopic;${geofenceTB.wktString};\n")
+    actions.append("${timestamp * 1000 + 2};${location.lat};${location.lon};subscribe;" + "$textBroadcastTopic;${geofenceTB.wktString};\n")
     checkSubscriptionGeofenceBrokerOverlap(geofenceTB)
     numberOfSubscribeMessages++
 
@@ -275,7 +287,7 @@ fun calculatePublishActions(timestamp: Int, location: Location): String {
     if (getTrueWithChance(roadConditionPublicationProbability)) {
         val geofenceRC = Geofence.circle(location, roadConditionMessageGeofenceDiameter)
         checkMessageGeofenceBrokerOverlap(geofenceRC)
-        actions.append("${timestamp*1000 + 3};${location.lat};${location.lon};publish;" + "$roadConditionTopic;${geofenceRC.wktString};$roadConditionPayloadSize\n")
+        actions.append("${timestamp * 1000 + 3};${location.lat};${location.lon};publish;" + "$roadConditionTopic;${geofenceRC.wktString};$roadConditionPayloadSize\n")
         numberOfPublishedMessages++
         totalPayloadSize += roadConditionPayloadSize
     }
@@ -286,7 +298,7 @@ fun calculatePublishActions(timestamp: Int, location: Location): String {
                 Random.nextDouble(minTextBroadcastMessageGeofenceDiameter, maxTextBroadcastMessageGeofenceDiameter))
         checkMessageGeofenceBrokerOverlap(geofenceTB)
         val payloadSize = Random.nextInt(minTextBroadcastPayloadSize, maxTextBroadcastPayloadSize)
-        actions.append("${timestamp*1000 + 4};${location.lat};${location.lon};publish;" + "$textBroadcastTopic;${geofenceTB.wktString};$payloadSize\n")
+        actions.append("${timestamp * 1000 + 4};${location.lat};${location.lon};publish;" + "$textBroadcastTopic;${geofenceTB.wktString};$payloadSize\n")
         totalPayloadSize += payloadSize
         numberOfPublishedMessages++
     }
