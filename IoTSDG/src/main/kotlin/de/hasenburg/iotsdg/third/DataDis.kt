@@ -48,30 +48,14 @@ private val workloadMachinePerBroker = listOf(3, 3, 3)
 private val subsPerBrokerArea = listOf(2, 2, 2)
 private val pubsPerBrokerArea = listOf(3, 3, 3)
 
-private var numberOfSubscribeMessages = 0
-private var timeToRunPerClient = 1800000
-private var numberOfPingMessages = 0
-private var clientDistanceTravelled = 0.0
-private var numberOfPublishedMessages = 0
-private var totalPayloadSize = 0
-private var numberOfOverlappingMessageGeofences = 0
+private const val timeToRunPerClient = 1800000
 
 fun main() {
 
-    for (ba in brokerAreas) {
-        var numberOfOverlaps = 0
-        for (baI in brokerAreas) {
-            if (ba.intersects(baI)) {
-                numberOfOverlaps++
-            }
-        }
-
-        if (numberOfOverlaps > 1) {
-            logger.fatal("Brokers should not overlap!")
-            System.exit(1)
-        }
+    if (checkBrokerOverlap()) {
+        logger.fatal("brokers can't overlap")
+        System.exit(1)
     }
-
     // make sure dir exists, delete old content
     val dir = File(directoryPath)
     if (dir.exists()) {
@@ -111,13 +95,11 @@ fun main() {
                 writer.write(calculatePublishActions(timestamp, location))
 
                 if (getTrueWithChance(mobilityProbability)) {
-                    val nexte = calculateNextLocation(broker.second,
+                    location = calculateNextLocation(broker.second,
                             location,
                             Random.nextDouble(0.0, 360.0),
                             minTravelDistance,
                             maxTravelDistance)
-                    location = nexte.first
-                    clientDistanceTravelled += nexte.second
                 }
                 timestamp += Random.nextInt(minPubTimeGap, maxPubTimeGap)
             }
@@ -149,90 +131,87 @@ fun main() {
                     writer.write(calculateSubscribeActions(timestamp, location))
                     subRenewalTime += Random.nextInt(minSubRenewalTime, maxSubRenewalTime)
                 }
-                val nexte = calculateNextLocation(broker.second,
+                location = calculateNextLocation(broker.second,
                         location,
                         Random.nextDouble(0.0, 360.0),
                         minTravelDistance,
                         maxTravelDistance)
-                location = nexte.first
-                clientDistanceTravelled += nexte.second
                 writer.write(calculatePingActions(timestamp, location))
                 timestamp += Random.nextInt(minSubTimeGap, maxSubTimeGap)
             }
             writer.flush()
             writer.close()
         }
-
-
     }
-    val distancePerClient = clientDistanceTravelled / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)
+    val distancePerClient = getclientDistanceTravelled() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)
     val output = """Data set characteristics:
-    Number of ping messages: $numberOfPingMessages (${numberOfPingMessages / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of subscribe messages: $numberOfSubscribeMessages (${numberOfSubscribeMessages / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of publish messages: $numberOfPublishedMessages (${numberOfPublishedMessages / (pubsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_publisher)
-    Publish payload size: ${totalPayloadSize / 1000.0} KB (${totalPayloadSize / numberOfPublishedMessages} byte/message)
-    Client distance travelled: ${clientDistanceTravelled}km ($distancePerClient km/client)
+    Number of ping messages: ${getnumberOfPingMessages()} (${getnumberOfPingMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
+    Number of subscribe messages: ${getnumberOfSubscribeMessages()} (${getnumberOfSubscribeMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
+    Number of publish messages: ${getnumberOfPublishedMessages()} (${getnumberOfPublishedMessages() / (pubsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_publisher)
+    Publish payload size: ${gettotalPayloadSize() / 1000.0} KB (${gettotalPayloadSize() / getnumberOfPublishedMessages()}
+    byte/message)
+    Client distance travelled: ${getclientDistanceTravelled()}km ($distancePerClient km/client)
     Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
-    Number of message geofence broker overlaps: $numberOfOverlappingMessageGeofences"""
+    Number of message geofence broker overlaps: ${getnumberOfOverlappingMessageGeofences()}"""
 
     logger.info(output)
     File("$directoryPath/02_summary.txt").appendText(output)
 }
 
-fun calculateSubscribeActions(timestamp: Int, location: Location): String {
+private fun calculateSubscribeActions(timestamp: Int, location: Location): String {
 
     val actions = StringBuilder()
 
     // temperature
     actions.append("${timestamp + 1};${location.lat};${location.lon};subscribe;" + "$temperatureTopic;;\n")
-    numberOfSubscribeMessages++
+    addSubscribeMessages()
 
     // humidity
     actions.append("${timestamp + 2};${location.lat};${location.lon};subscribe;" + "$humidityTopic;;\n")
-    numberOfSubscribeMessages++
+    addSubscribeMessages()
 
     // barometric pressure
     actions.append("${timestamp + 3};${location.lat};${location.lon};subscribe;" + "$announcementTopic;;\n")
-    numberOfSubscribeMessages++
+    addSubscribeMessages()
 
     return actions.toString()
 }
 
-fun calculatePublishActions(timestamp: Int, location: Location): String {
+private fun calculatePublishActions(timestamp: Int, location: Location): String {
     val actions = StringBuilder()
 
     // temperature condition
     val geofenceTB = Geofence.circle(location,
             Random.nextDouble(minTemperatureBroadcastMessageGeofenceDiameter,
                     maxTemperatureBroadcastMessageGeofenceDiameter))
-    numberOfOverlappingMessageGeofences += checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas)
     actions.append("${timestamp + 4};${location.lat};${location.lon};publish;" + "$temperatureTopic;" + "${geofenceTB.wktString};" + "$temperaturePayloadSize\n")
-    numberOfPublishedMessages++
-    totalPayloadSize += temperaturePayloadSize
+    addPublishMessages()
+    addPayloadSize(temperaturePayloadSize)
 
     // humidity broadcast
     val geofenceH = Geofence.circle(location,
             Random.nextDouble(minHumidityBroadcastMessageGeofenceDiameter, maxHumidityBroadcastMessageGeofenceDiameter))
-    numberOfOverlappingMessageGeofences += checkMessageGeofenceBrokerOverlap(geofenceH, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofenceH, brokerAreas)
     var payloadSize = Random.nextInt(minHumidityPayloadSize, maxHumidityPayloadSize)
     actions.append("${timestamp + 5};${location.lat};${location.lon};publish;" + "$humidityTopic;" + "${geofenceH.wktString};" + "$payloadSize\n")
-    totalPayloadSize += payloadSize
-    numberOfPublishedMessages++
+    addPayloadSize(payloadSize)
+    addPublishMessages()
 
     // public announcement broadcast
     val geofencePA = Geofence.circle(location,
             Random.nextDouble(minAnnouncementBroadcastMessageGeofenceDiameter,
                     maxAnnouncementBroadcastMessageGeofenceDiameter))
-    numberOfOverlappingMessageGeofences += checkMessageGeofenceBrokerOverlap(geofencePA, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofencePA, brokerAreas)
     payloadSize = Random.nextInt(minAnnouncementPayloadSize, maxAnnouncementPayloadSize)
     actions.append("${timestamp + 6};${location.lat};${location.lon};publish;" + "$announcementTopic;" + "${geofencePA.wktString};" + "$payloadSize\n")
-    totalPayloadSize += payloadSize
-    numberOfPublishedMessages++
+    addPayloadSize(payloadSize)
+    addPublishMessages()
 
     return actions.toString()
 }
 
-fun getSetupString(s: String): String {
+private fun getSetupString(s: String): String {
     // there should be another solution in the future: https://stackoverflow.com/questions/33907095/kotlin-how-can-i-use-reflection-on-packages
     val c = Class.forName(s)
     val stringBuilder = java.lang.StringBuilder("Setup:\n")
@@ -246,5 +225,4 @@ fun getSetupString(s: String): String {
         }
     }
     return stringBuilder.toString()
-
 }

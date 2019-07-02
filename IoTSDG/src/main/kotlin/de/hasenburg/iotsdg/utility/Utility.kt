@@ -5,45 +5,65 @@ import de.hasenburg.geobroker.commons.model.spatial.Location
 import kotlin.random.Random
 import org.apache.logging.log4j.LogManager
 
+// Stats
+private var numberOfPingMessages = 0
+private var clientDistanceTravelled = 0.0
+private var numberOfPublishedMessages = 0
+private var totalPayloadSize = 0
+private var numberOfOverlappingSubscriptionGeofences = 0
+private var numberOfSubscribeMessages = 0
+private var numberOfOverlappingMessageGeofences = 0
+
+//returns the title row
 fun getHeader(): String {
     return "timestamp(ms);latitude;longitude;action_type;topic;geofence;payload_size\n"
 }
 
-
+// returns a triple of brokername, broker area and clients in the area
 fun getBrokerTriple(i: Int, brokerNames: List<String>, brokerAreas: List<Geofence>,
                     clientsPerBrokerArea: List<Int>): Triple<String, Geofence, Int> {
     return Triple(brokerNames[i], brokerAreas[i], clientsPerBrokerArea[i])
 }
 
+//returns a triple of brokernam, broker area, subscribers and publishers in the area
 fun getBrokerTriple(i: Int, brokerNames: List<String>, brokerAreas: List<Geofence>, subsPerBrokerArea: List<Int>,
                     pubsPerBrokerArea: List<Int>): Triple<String, Geofence, Pair<Int, Int>> {
     return Triple(brokerNames[i], brokerAreas[i], Pair(subsPerBrokerArea[i], pubsPerBrokerArea[i]))
 }
 
-fun checkSubscriptionGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>): Int {
+// count no. of subscription overlaps
+fun checkSubscriptionGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>) {
     var intersects = -1 // own broker
     brokerAreas.forEach {
         if (geofence.intersects(it)) {
             intersects++
         }
     }
-    return intersects
+    numberOfOverlappingSubscriptionGeofences += intersects
 }
 
-fun checkMessageGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>): Int {
+// count no. of message overlaps
+fun checkMessageGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>) {
     var intersects = -1 // own broker
     brokerAreas.forEach {
         if (geofence.intersects(it)) {
             intersects++
         }
     }
-    return intersects
+    numberOfOverlappingMessageGeofences += intersects
 }
 
 fun calculatePingActions(timestamp: Int, location: Location): String {
+    numberOfPingMessages++
     return "$timestamp;${location.lat};${location.lon};ping;;;\n"
 }
 
+/**
+ * Returns true with the given chance.
+ *
+ * @param chance - the chance to return true (0 - 100)
+ * @return true, if lucky
+ */
 fun getTrueWithChance(chance: Int): Boolean {
     @Suppress("NAME_SHADOWING") var chance = chance
     // normalize
@@ -56,8 +76,13 @@ fun getTrueWithChance(chance: Int): Boolean {
     return random <= chance
 }
 
+/**
+ * Calculate a new location based upon
+ * TravelDistance, previous location and Direction
+ * New Location should also be within the same broker area
+ */
 fun calculateNextLocation(brokerGeofence: Geofence, location: Location, clientDirection: Double,
-                          minTravelDistance: Double, maxTravelDistance: Double): Pair<Location, Double> {
+                          minTravelDistance: Double, maxTravelDistance: Double): Location {
     var nextLocation: Location
 
     var relaxFactor = 1.0
@@ -82,18 +107,24 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, clientDi
             nextLocation = Location.locationInDistance(location, distance, direction + 180.0)
         } else if (relaxFactor > 32) {
             logger.warn("Location $location cannot be used to find another location.")
-            return Pair(location, 0.0)
+            return location
         }
 
         // only stop when we found the next location
         if (brokerGeofence.contains(nextLocation)) {
-            return Pair(nextLocation, distance)
+            clientDistanceTravelled += distance
+            return nextLocation
         }
     }
 }
 
+/**
+ * Calculates new Location based upon
+ * TravelSpeed, previous location and Direction
+ * New Location should be within the same broker area
+ */
 fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTime: Int, clientDirection: Double,
-                          minTravelSpeed: Int, maxTravelSpeed: Int): Pair<Location, Double> {
+                          minTravelSpeed: Int, maxTravelSpeed: Int): Location {
     var nextLocation: Location
 
     var relaxFactor = 1.0
@@ -119,12 +150,76 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTi
             nextLocation = Location.locationInDistance(location, distance, direction + 180.0)
         } else if (relaxFactor > 32) {
             logger.warn("Location $location cannot be used to find another location.")
-            return Pair(location, 0.0)
+            return location
         }
 
         // only stop when we found the next location
         if (brokerGeofence.contains(nextLocation)) {
-            return Pair(nextLocation, distance)
+            clientDistanceTravelled += distance
+            return nextLocation
         }
     }
+}
+
+// checking overlapping brokerareas
+fun checkBrokerOverlap(brokerAreas: List<Geofence>): Boolean {
+    for (ba in brokerAreas) {
+        var numberOfOverlaps = 0
+        for (baI in brokerAreas) {
+            if (ba.intersects(baI)) {
+                numberOfOverlaps++
+            }
+        }
+
+        if (numberOfOverlaps > 1) {
+            return true
+        }
+    }
+    return false
+}
+
+
+/**
+ * Updating Stats
+ */
+fun addSubscribeMessages() {
+    numberOfSubscribeMessages++
+}
+
+fun addPublishMessages() {
+    numberOfPublishedMessages++
+}
+
+fun addPayloadSize(size: Int) {
+    totalPayloadSize += size
+}
+
+/**
+ * getting Stats*/
+fun getnumberOfPingMessages(): Int {
+    return numberOfPingMessages
+}
+
+fun getnumberOfPublishedMessages(): Int {
+    return numberOfPublishedMessages
+}
+
+fun getnumberOfSubscribeMessages(): Int {
+    return numberOfSubscribeMessages
+}
+
+fun getclientDistanceTravelled(): Double {
+    return clientDistanceTravelled
+}
+
+fun getnumberOfOverlappingSubscriptionGeofences(): Int {
+    return numberOfOverlappingSubscriptionGeofences
+}
+
+fun getnumberOfOverlappingMessageGeofences(): Int {
+    return numberOfOverlappingMessageGeofences
+}
+
+fun gettotalPayloadSize(): Int {
+    return totalPayloadSize
 }
