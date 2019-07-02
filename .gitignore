@@ -6,4 +6,5 @@ target/
 logfile.log
 out/
 environmentaldata/
-
+dataDistribution/
+Sample/
