@@ -52,7 +52,7 @@ private const val timeToRunPerClient = 1800000
 
 fun main() {
 
-    if (checkBrokerOverlap()) {
+    if (checkBrokerOverlap(brokerAreas)) {
         logger.fatal("brokers can't overlap")
         System.exit(1)
     }
