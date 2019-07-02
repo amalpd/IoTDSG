@@ -1,4 +1,4 @@
-package de.hasenburg.iotsdg
+package de.hasenburg.iotsdg.utility
 
 import de.hasenburg.geobroker.commons.model.spatial.Geofence
 import de.hasenburg.geobroker.commons.model.spatial.Location
