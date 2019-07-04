@@ -3,12 +3,12 @@ package de.hasenburg.iotsdg.first
 import de.hasenburg.geobroker.commons.model.spatial.Geofence
 import de.hasenburg.geobroker.commons.model.spatial.Location
 import de.hasenburg.geobroker.commons.randomName
-import de.hasenburg.iotsdg.openData.getHeader
 import org.apache.logging.log4j.LogManager
 import org.locationtech.spatial4j.distance.DistanceUtils.KM_TO_DEG
 import java.io.File
 import de.hasenburg.iotsdg.utility.*
 import kotlin.random.Random
+import de.hasenburg.iotsdg.stats.Stats
 
 private val logger = LogManager.getLogger()
 
@@ -66,7 +66,8 @@ fun main() {
         logger.fatal("Brokers should not overlap!")
         System.exit(1)
     }
-
+    // Stats variable to indicate for the scenario
+    val stat = Stats()
     // make sure dir exists, delete old content
     val dir = File(directoryPath)
     if (dir.exists()) {
@@ -116,19 +117,19 @@ fun main() {
             writer.write(getHeader())
 
             // create initial subscriptions
-            writer.write(calculateSubscribeActions(timestamp, location, geofenceTB))
+            writer.write(calculateSubscribeActions(timestamp, location, geofenceTB, stat))
             timestamp++ // 1 second of nothing
 
             // generate actions until time reached
             while (timestamp <= timeToRunPerClient) {
-                writer.write(calculatePingActions(timestamp, location))
+                writer.write(calculatePingActions(timestamp, location, stat))
                 val travelledDistance = location.distanceKmTo(lastUpdatedLocation) * 1000.0
                 if (travelledDistance >= subscriptionRenewalDistance) {
                     logger.debug("Renewing subscription for client $clientName")
-                    writer.write(calculateSubscribeActions(timestamp, location, geofenceTB))
+                    writer.write(calculateSubscribeActions(timestamp, location, geofenceTB, stat))
                     lastUpdatedLocation = location
                 }
-                writer.write(calculatePublishActions(timestamp, location))
+                writer.write(calculatePublishActions(timestamp, location, stat))
 
                 val travelTime = Random.nextInt(minTravelTime, maxTravelTime)
                 location = calculateNextLocation(broker.second,
@@ -136,7 +137,8 @@ fun main() {
                         travelTime,
                         clientDirection,
                         minTravelSpeed,
-                        maxTravelSpeed)
+                        maxTravelSpeed,
+                        stat)
                 timestamp += travelTime
             }
 
@@ -144,21 +146,7 @@ fun main() {
             writer.close()
         }
     }
-
-    val distancePerClient = getclientDistanceTravelled() / clientsPerBrokerArea.stream().mapToInt { it }.sum()
-    val output = """Data set characteristics:
-    Number of ping messages: ${getnumberOfPingMessages()} (${getnumberOfPingMessages() / timeToRunPerClient} messages/s)
-    Number of subscribe messages: ${getnumberOfSubscribeMessages()} (${getnumberOfSubscribeMessages() / timeToRunPerClient}
-    messages/s)
-    Number of publish messages: ${getnumberOfPublishedMessages()} (${getnumberOfPublishedMessages() / timeToRunPerClient}
-    messages/s)
-    Publish payload size: ${gettotalPayloadSize() / 1000.0} KB (${gettotalPayloadSize() / getnumberOfPublishedMessages()}
-    byte/message)
-    Client distance travelled: ${getclientDistanceTravelled()}km ($distancePerClient km/client)
-    Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
-    Number of subscription geofence broker overlaps: ${getnumberOfOverlappingSubscriptionGeofences()}
-    Number of message geofence broker overlaps: ${getnumberOfOverlappingMessageGeofences()}"""
-
+    val output = getOutput(clientsPerBrokerArea, timeToRunPerClient, stat)
     logger.info(output)
     File("$directoryPath/00_summary.txt").appendText(output)
 }
@@ -180,44 +168,44 @@ private fun getSetupString(): String {
 
 }
 
-private fun calculateSubscribeActions(timestamp: Int, location: Location, geofenceTB: Geofence): String {
+private fun calculateSubscribeActions(timestamp: Int, location: Location, geofenceTB: Geofence, stat: Stats): String {
     val actions = StringBuilder()
 
     // road condition
     val geofenceRC = Geofence.circle(location, roadConditionSubscriptionGeofenceDiameter)
-    checkSubscriptionGeofenceBrokerOverlap(geofenceRC, brokerAreas)
+    checkSubscriptionGeofenceBrokerOverlap(geofenceRC, brokerAreas, stat)
     actions.append("${timestamp * 1000 + 1};${location.lat};${location.lon};subscribe;" + "$roadConditionTopic;${geofenceRC.wktString};\n")
-    addSubscribeMessages()
+    stat.addSubscribeMessages()
 
     // text broadcast
     actions.append("${timestamp * 1000 + 2};${location.lat};${location.lon};subscribe;" + "$textBroadcastTopic;${geofenceTB.wktString};\n")
-    checkSubscriptionGeofenceBrokerOverlap(geofenceTB, brokerAreas)
-    addSubscribeMessages()
+    checkSubscriptionGeofenceBrokerOverlap(geofenceTB, brokerAreas, stat)
+    stat.addSubscribeMessages()
 
     return actions.toString()
 }
 
-private fun calculatePublishActions(timestamp: Int, location: Location): String {
+private fun calculatePublishActions(timestamp: Int, location: Location, stat: Stats): String {
     val actions = StringBuilder()
 
     // road condition
     if (getTrueWithChance(roadConditionPublicationProbability)) {
         val geofenceRC = Geofence.circle(location, roadConditionMessageGeofenceDiameter)
-        checkMessageGeofenceBrokerOverlap(geofenceRC, brokerAreas)
+        checkMessageGeofenceBrokerOverlap(geofenceRC, brokerAreas, stat)
         actions.append("${timestamp * 1000 + 3};${location.lat};${location.lon};publish;" + "$roadConditionTopic;${geofenceRC.wktString};$roadConditionPayloadSize\n")
-        addPublishMessages()
-        addPayloadSize(roadConditionPayloadSize)
+        stat.addPublishMessages()
+        stat.addPayloadSize(roadConditionPayloadSize)
     }
 
     // text broadcast
     if (getTrueWithChance(textBroadcastPublicationProbability)) {
         val geofenceTB = Geofence.circle(location,
                 Random.nextDouble(minTextBroadcastMessageGeofenceDiameter, maxTextBroadcastMessageGeofenceDiameter))
-        checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas)
+        checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas, stat)
         val payloadSize = Random.nextInt(minTextBroadcastPayloadSize, maxTextBroadcastPayloadSize)
         actions.append("${timestamp * 1000 + 4};${location.lat};${location.lon};publish;" + "$textBroadcastTopic;${geofenceTB.wktString};$payloadSize\n")
-        addPublishMessages()
-        addPayloadSize(payloadSize)
+        stat.addPublishMessages()
+        stat.addPayloadSize(payloadSize)
     }
     return actions.toString()
 }

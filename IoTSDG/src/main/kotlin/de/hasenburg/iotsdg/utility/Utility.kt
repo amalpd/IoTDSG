@@ -4,6 +4,7 @@ import de.hasenburg.geobroker.commons.model.spatial.Geofence
 import de.hasenburg.geobroker.commons.model.spatial.Location
 import kotlin.random.Random
 import org.apache.logging.log4j.LogManager
+import de.hasenburg.iotsdg.stats.Stats
 
 // Stats
 private var numberOfPingMessages = 0
@@ -32,29 +33,29 @@ fun getBrokerTriple(i: Int, brokerNames: List<String>, brokerAreas: List<Geofenc
 }
 
 // count no. of subscription overlaps
-fun checkSubscriptionGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>) {
+fun checkSubscriptionGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>, stat: Stats) {
     var intersects = -1 // own broker
     brokerAreas.forEach {
         if (geofence.intersects(it)) {
             intersects++
         }
     }
-    numberOfOverlappingSubscriptionGeofences += intersects
+    stat.addSubscriptionGeofence(intersects)
 }
 
 // count no. of message overlaps
-fun checkMessageGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>) {
+fun checkMessageGeofenceBrokerOverlap(geofence: Geofence, brokerAreas: List<Geofence>, stat: Stats) {
     var intersects = -1 // own broker
     brokerAreas.forEach {
         if (geofence.intersects(it)) {
             intersects++
         }
     }
-    numberOfOverlappingMessageGeofences += intersects
+    stat.addMessageGeofence(intersects)
 }
 
-fun calculatePingActions(timestamp: Int, location: Location): String {
-    numberOfPingMessages++
+fun calculatePingActions(timestamp: Int, location: Location, stat: Stats): String {
+    stat.addPingMessages()
     return "$timestamp;${location.lat};${location.lon};ping;;;\n"
 }
 
@@ -82,7 +83,7 @@ fun getTrueWithChance(chance: Int): Boolean {
  * New Location should also be within the same broker area
  */
 fun calculateNextLocation(brokerGeofence: Geofence, location: Location, clientDirection: Double,
-                          minTravelDistance: Double, maxTravelDistance: Double): Location {
+                          minTravelDistance: Double, maxTravelDistance: Double, stat: Stats): Location {
     var nextLocation: Location
 
     var relaxFactor = 1.0
@@ -112,7 +113,7 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, clientDi
 
         // only stop when we found the next location
         if (brokerGeofence.contains(nextLocation)) {
-            clientDistanceTravelled += distance
+            stat.addClientDistanceTravelled(distance)
             return nextLocation
         }
     }
@@ -124,7 +125,7 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, clientDi
  * New Location should be within the same broker area
  */
 fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTime: Int, clientDirection: Double,
-                          minTravelSpeed: Int, maxTravelSpeed: Int): Location {
+                          minTravelSpeed: Int, maxTravelSpeed: Int, stat: Stats): Location {
     var nextLocation: Location
 
     var relaxFactor = 1.0
@@ -155,7 +156,7 @@ fun calculateNextLocation(brokerGeofence: Geofence, location: Location, travelTi
 
         // only stop when we found the next location
         if (brokerGeofence.contains(nextLocation)) {
-            clientDistanceTravelled += distance
+            stat.addClientDistanceTravelled(distance)
             return nextLocation
         }
     }
@@ -179,47 +180,35 @@ fun checkBrokerOverlap(brokerAreas: List<Geofence>): Boolean {
 }
 
 
-/**
- * Updating Stats
- */
-fun addSubscribeMessages() {
-    numberOfSubscribeMessages++
+fun getOutput(brokerNames: List<String>, subsPerBrokerArea: List<Int>, pubsPerBrokerArea: List<Int>,
+              timeToRunPerClient: Int, stat: Stats): String {
+
+    val distancePerClient = stat.getClientDistanceTravelled() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)
+    return """Data set characteristics:
+    Number of ping messages: ${stat.getNumberOfPingMessages()} (${stat.getNumberOfPingMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
+    Number of subscribe messages: ${stat.getNumberOfSubscribeMessages()} (${stat.getNumberOfSubscribeMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
+    Number of publish messages: ${stat.getNumberOfPublishedMessages()} (${stat.getNumberOfPublishedMessages() / (pubsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_publisher)
+    Publish payload size: ${stat.getTotalPayloadSize() / 1000.0} KB (${stat.getTotalPayloadSize() / stat.getNumberOfPublishedMessages()}
+    byte/message)
+    Client distance travelled: ${stat.getClientDistanceTravelled()}km ($distancePerClient km/client)
+    Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
+    Number of message geofence broker overlaps: ${stat.getNumberOfOverlappingMessageGeofences()}
+    Number of subscription geofence broker overlaps: ${stat.getNumberOfOverlappingSubscriptionGeofences()}"""
 }
 
-fun addPublishMessages() {
-    numberOfPublishedMessages++
-}
-
-fun addPayloadSize(size: Int) {
-    totalPayloadSize += size
-}
-
-/**
- * getting Stats*/
-fun getnumberOfPingMessages(): Int {
-    return numberOfPingMessages
-}
-
-fun getnumberOfPublishedMessages(): Int {
-    return numberOfPublishedMessages
-}
-
-fun getnumberOfSubscribeMessages(): Int {
-    return numberOfSubscribeMessages
-}
-
-fun getclientDistanceTravelled(): Double {
-    return clientDistanceTravelled
-}
-
-fun getnumberOfOverlappingSubscriptionGeofences(): Int {
-    return numberOfOverlappingSubscriptionGeofences
-}
-
-fun getnumberOfOverlappingMessageGeofences(): Int {
-    return numberOfOverlappingMessageGeofences
-}
-
-fun gettotalPayloadSize(): Int {
-    return totalPayloadSize
+fun getOutput(clientsPerBrokerArea: List<Int>, timeToRunPerClient: Int, stat: Stats): String {
+    val distancePerClient = stat.getClientDistanceTravelled() / clientsPerBrokerArea.stream().mapToInt { it }.sum()
+    return """Data set characteristics:
+    Number of ping messages: ${stat.getNumberOfPingMessages()} (${stat.getNumberOfPingMessages() / timeToRunPerClient}
+    messages/s)
+    Number of subscribe messages: ${stat.getNumberOfSubscribeMessages()} (${stat.getNumberOfSubscribeMessages() / timeToRunPerClient}
+    messages/s)
+    Number of publish messages: ${stat.getNumberOfPublishedMessages()} (${stat.getNumberOfPublishedMessages() / timeToRunPerClient}
+    messages/s)
+    Publish payload size: ${stat.getTotalPayloadSize() / 1000.0} KB (${stat.getTotalPayloadSize() / stat.getNumberOfPublishedMessages()}
+    byte/message)
+    Client distance travelled: ${stat.getClientDistanceTravelled()}km ($distancePerClient km/client)
+    Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
+    Number of subscription geofence broker overlaps: ${stat.getNumberOfOverlappingSubscriptionGeofences()}
+    Number of message geofence broker overlaps: ${stat.getNumberOfOverlappingMessageGeofences()}"""
 }

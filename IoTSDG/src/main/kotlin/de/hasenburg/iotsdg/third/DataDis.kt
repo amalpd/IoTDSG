@@ -3,6 +3,7 @@ package de.hasenburg.iotsdg.third
 import de.hasenburg.geobroker.commons.model.spatial.Geofence
 import de.hasenburg.geobroker.commons.model.spatial.Location
 import de.hasenburg.geobroker.commons.randomName
+import de.hasenburg.iotsdg.stats.Stats
 import de.hasenburg.iotsdg.utility.*
 import org.locationtech.spatial4j.distance.DistanceUtils
 import java.io.File
@@ -56,6 +57,8 @@ fun main() {
         logger.fatal("brokers can't overlap")
         System.exit(1)
     }
+    // Stats for indicators to the scenario
+    val stat = Stats()
     // make sure dir exists, delete old content
     val dir = File(directoryPath)
     if (dir.exists()) {
@@ -92,14 +95,15 @@ fun main() {
 
             while (timestamp <= timeToRunPerClient) {
 
-                writer.write(calculatePublishActions(timestamp, location))
+                writer.write(calculatePublishActions(timestamp, location, stat))
 
                 if (getTrueWithChance(mobilityProbability)) {
                     location = calculateNextLocation(broker.second,
                             location,
                             Random.nextDouble(0.0, 360.0),
                             minTravelDistance,
-                            maxTravelDistance)
+                            maxTravelDistance,
+                            stat)
                 }
                 timestamp += Random.nextInt(minPubTimeGap, maxPubTimeGap)
             }
@@ -121,92 +125,83 @@ fun main() {
             val file = File("$directoryPath/${broker.first}-$currentWorkloadMachine-Sub-$clientName.csv")
             val writer = file.bufferedWriter()
             writer.write(getHeader())
-            writer.write(calculateSubscribeActions(timestamp, location))
+            writer.write(calculateSubscribeActions(timestamp, location, stat))
             timestamp += 1000
             var subRenewalTime = Random.nextInt(minSubRenewalTime, maxSubRenewalTime)
 
             while (timestamp <= timeToRunPerClient) {
 
                 if (timestamp >= subRenewalTime) {
-                    writer.write(calculateSubscribeActions(timestamp, location))
+                    writer.write(calculateSubscribeActions(timestamp, location, stat))
                     subRenewalTime += Random.nextInt(minSubRenewalTime, maxSubRenewalTime)
                 }
                 location = calculateNextLocation(broker.second,
                         location,
                         Random.nextDouble(0.0, 360.0),
                         minTravelDistance,
-                        maxTravelDistance)
-                writer.write(calculatePingActions(timestamp, location))
+                        maxTravelDistance,
+                        stat)
+                writer.write(calculatePingActions(timestamp, location, stat))
                 timestamp += Random.nextInt(minSubTimeGap, maxSubTimeGap)
             }
             writer.flush()
             writer.close()
         }
     }
-    val distancePerClient = getclientDistanceTravelled() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)
-    val output = """Data set characteristics:
-    Number of ping messages: ${getnumberOfPingMessages()} (${getnumberOfPingMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of subscribe messages: ${getnumberOfSubscribeMessages()} (${getnumberOfSubscribeMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of publish messages: ${getnumberOfPublishedMessages()} (${getnumberOfPublishedMessages() / (pubsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_publisher)
-    Publish payload size: ${gettotalPayloadSize() / 1000.0} KB (${gettotalPayloadSize() / getnumberOfPublishedMessages()}
-    byte/message)
-    Client distance travelled: ${getclientDistanceTravelled()}km ($distancePerClient km/client)
-    Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
-    Number of message geofence broker overlaps: ${getnumberOfOverlappingMessageGeofences()}"""
-
+    val output = getOutput(brokerNames, subsPerBrokerArea, pubsPerBrokerArea, timeToRunPerClient / 1000, stat)
     logger.info(output)
     File("$directoryPath/02_summary.txt").appendText(output)
 }
 
-private fun calculateSubscribeActions(timestamp: Int, location: Location): String {
+private fun calculateSubscribeActions(timestamp: Int, location: Location, stat: Stats): String {
 
     val actions = StringBuilder()
 
     // temperature
     actions.append("${timestamp + 1};${location.lat};${location.lon};subscribe;" + "$temperatureTopic;;\n")
-    addSubscribeMessages()
+    stat.addSubscribeMessages()
 
     // humidity
     actions.append("${timestamp + 2};${location.lat};${location.lon};subscribe;" + "$humidityTopic;;\n")
-    addSubscribeMessages()
+    stat.addSubscribeMessages()
 
     // barometric pressure
     actions.append("${timestamp + 3};${location.lat};${location.lon};subscribe;" + "$announcementTopic;;\n")
-    addSubscribeMessages()
+    stat.addSubscribeMessages()
 
     return actions.toString()
 }
 
-private fun calculatePublishActions(timestamp: Int, location: Location): String {
+private fun calculatePublishActions(timestamp: Int, location: Location, stat: Stats): String {
     val actions = StringBuilder()
 
     // temperature condition
     val geofenceTB = Geofence.circle(location,
             Random.nextDouble(minTemperatureBroadcastMessageGeofenceDiameter,
                     maxTemperatureBroadcastMessageGeofenceDiameter))
-    checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofenceTB, brokerAreas, stat)
     actions.append("${timestamp + 4};${location.lat};${location.lon};publish;" + "$temperatureTopic;" + "${geofenceTB.wktString};" + "$temperaturePayloadSize\n")
-    addPublishMessages()
-    addPayloadSize(temperaturePayloadSize)
+    stat.addPublishMessages()
+    stat.addPayloadSize(temperaturePayloadSize)
 
     // humidity broadcast
     val geofenceH = Geofence.circle(location,
             Random.nextDouble(minHumidityBroadcastMessageGeofenceDiameter, maxHumidityBroadcastMessageGeofenceDiameter))
-    checkMessageGeofenceBrokerOverlap(geofenceH, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofenceH, brokerAreas, stat)
     var payloadSize = Random.nextInt(minHumidityPayloadSize, maxHumidityPayloadSize)
     actions.append("${timestamp + 5};${location.lat};${location.lon};publish;" + "$humidityTopic;" + "${geofenceH.wktString};" + "$payloadSize\n")
-    addPayloadSize(payloadSize)
-    addPublishMessages()
+    stat.addPayloadSize(payloadSize)
+    stat.addPublishMessages()
 
     // public announcement broadcast
     val geofencePA = Geofence.circle(location,
             Random.nextDouble(minAnnouncementBroadcastMessageGeofenceDiameter,
                     maxAnnouncementBroadcastMessageGeofenceDiameter))
-    checkMessageGeofenceBrokerOverlap(geofencePA, brokerAreas)
+    checkMessageGeofenceBrokerOverlap(geofencePA, brokerAreas, stat)
     payloadSize = Random.nextInt(minAnnouncementPayloadSize, maxAnnouncementPayloadSize)
     actions.append("${timestamp + 6};${location.lat};${location.lon};publish;" + "$announcementTopic;" + "${geofencePA.wktString};" + "$payloadSize\n")
-    addPayloadSize(payloadSize)
-    addPublishMessages()
+    stat.addPayloadSize(payloadSize)
+    stat.addPublishMessages()
 
     return actions.toString()
 }

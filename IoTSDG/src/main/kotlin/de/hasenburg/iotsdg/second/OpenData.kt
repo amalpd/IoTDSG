@@ -8,6 +8,7 @@ import org.locationtech.spatial4j.distance.DistanceUtils
 import java.io.File
 import org.apache.logging.log4j.LogManager
 import kotlin.random.Random
+import de.hasenburg.iotsdg.stats.Stats
 
 
 private val logger = LogManager.getLogger()
@@ -28,9 +29,6 @@ private const val maxHumidityBroadcastSubscriptionGeofenceDiameter = 500.0 * Dis
 private const val minBarometricBroadcastSubscriptionGeofenceDiameter = 1.0 * DistanceUtils.KM_TO_DEG
 private const val maxBarometricBroadcastSubscriptionGeofenceDiameter = 500.0 * DistanceUtils.KM_TO_DEG
 
-private const val temperaturePublicationProbability = 100
-private const val humidityPublicationProbability = 100
-private const val barometerPublicationProbability = 100
 private const val mobilityProbability = 10
 private const val temperaturePayloadSize = 100
 private const val minHumidityPayloadSize = 50
@@ -59,6 +57,8 @@ fun main() {
         logger.fatal("brokers should not overlap")
         System.exit(1)
     }
+    //to maintain indicators for scenario
+    val stat = Stats()
     // make sure dir exists, delete old content
     val dir = File(directoryPath)
     if (dir.exists()) {
@@ -89,9 +89,9 @@ fun main() {
             val writer = file.bufferedWriter()
             val location = Location.randomInGeofence(broker.second)
             writer.write(getHeader())
-            writer.write(calculatePingActions(timestamp, location))
+            writer.write(calculatePingActions(timestamp, location, stat))
             while (timestamp <= timeToRunPerClient) {
-                writer.write(calculatePublishActions(timestamp, location))
+                writer.write(calculatePublishActions(timestamp, location, stat))
                 timestamp += Random.nextInt(minPubTimeGap, maxPubTimeGap)
             }
             writer.flush()
@@ -112,23 +112,24 @@ fun main() {
             val file = File("$directoryPath/${broker.first}-$currentWorkloadMachine-Sub-$clientName.csv")
             val writer = file.bufferedWriter()
             writer.write(getHeader())
-            writer.write(calculateSubscribeActions(timestamp, location))
+            writer.write(calculateSubscribeActions(timestamp, location, stat))
             timestamp += 1000
             var subRenewalTime = Random.nextInt(minSubRenewalTime, maxSubRenewalTime)
 
             while (timestamp <= timeToRunPerClient) {
 
                 if (timestamp >= subRenewalTime) {
-                    writer.write(calculateSubscribeActions(timestamp, location))
+                    writer.write(calculateSubscribeActions(timestamp, location, stat))
                     subRenewalTime += Random.nextInt(minSubRenewalTime, maxSubRenewalTime)
                 }
                 if (getTrueWithChance(mobilityProbability)) {
-                    writer.write(calculatePingActions(timestamp, location))
+                    writer.write(calculatePingActions(timestamp, location, stat))
                     location = calculateNextLocation(broker.second,
                             location,
                             Random.nextDouble(0.0, 360.0),
                             minTravelDistance,
-                            maxTravelDistance)
+                            maxTravelDistance,
+                            stat)
                 }
                 timestamp += Random.nextInt(minSubTimeGap, maxSubTimeGap)
             }
@@ -136,22 +137,13 @@ fun main() {
             writer.close()
         }
     }
-    val distancePerClient = getclientDistanceTravelled() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)
-    val output = """Data set characteristics:
-    Number of ping messages: ${getnumberOfPingMessages()} (${getnumberOfPingMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of subscribe messages: ${getnumberOfSubscribeMessages()} (${getnumberOfSubscribeMessages() / (subsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_subscriber)
-    Number of publish messages: ${getnumberOfPublishedMessages()} (${getnumberOfPublishedMessages() / (pubsPerBrokerArea.stream().mapToInt { it }.sum() + brokerNames.size)} messages/per_publisher)
-    Publish payload size: ${gettotalPayloadSize() / 1000.0} KB (${gettotalPayloadSize() / getnumberOfPublishedMessages()}
-    byte/message)
-    Client distance travelled: ${getclientDistanceTravelled()}km ($distancePerClient km/client)
-    Client average speed: ${distancePerClient / timeToRunPerClient * 3600} km/h
-    Number of message subscription broker overlaps: ${getnumberOfOverlappingSubscriptionGeofences()}"""
+    val output = getOutput(brokerNames, subsPerBrokerArea, pubsPerBrokerArea, timeToRunPerClient / 1000, stat)
 
     logger.info(output)
     File("$directoryPath/01_summary.txt").appendText(output)
 }
 
-private fun calculateSubscribeActions(timestamp: Int, location: Location): String {
+private fun calculateSubscribeActions(timestamp: Int, location: Location, stat: Stats): String {
 
     val actions = StringBuilder()
 
@@ -159,54 +151,48 @@ private fun calculateSubscribeActions(timestamp: Int, location: Location): Strin
     val geofenceTB = Geofence.circle(location,
             Random.nextDouble(minTemperatureBroadcastSubscriptionGeofenceDiameter,
                     maxTemperatureBroadcastSubscriptionGeofenceDiameter))
-    checkSubscriptionGeofenceBrokerOverlap(geofenceTB, brokerAreas)
+    checkSubscriptionGeofenceBrokerOverlap(geofenceTB, brokerAreas, stat)
     actions.append("${timestamp + 1};${location.lat};${location.lon};subscribe;" + "$temperatureTopic;" + "${geofenceTB.wktString};\n")
-    addSubscribeMessages()
+    stat.addSubscribeMessages()
 
     // humidity
     val geofenceHB = Geofence.circle(location,
             Random.nextDouble(minHumidityBroadcastSubscriptionGeofenceDiameter,
                     maxHumidityBroadcastSubscriptionGeofenceDiameter))
     actions.append("${timestamp + 2};${location.lat};${location.lon};subscribe;" + "$humidityTopic;" + "${geofenceHB.wktString};\n")
-    checkSubscriptionGeofenceBrokerOverlap(geofenceHB, brokerAreas)
-    addSubscribeMessages()
+    checkSubscriptionGeofenceBrokerOverlap(geofenceHB, brokerAreas, stat)
+    stat.addSubscribeMessages()
 
     // barometric pressure
     val geofenceBB = Geofence.circle(location,
             Random.nextDouble(minBarometricBroadcastSubscriptionGeofenceDiameter,
                     maxBarometricBroadcastSubscriptionGeofenceDiameter))
     actions.append("${timestamp + 3};${location.lat};${location.lon};subscribe;" + "$barometricPressureTopic;" + "${geofenceBB.wktString};\n")
-    checkSubscriptionGeofenceBrokerOverlap(geofenceBB, brokerAreas)
-    addSubscribeMessages()
+    checkSubscriptionGeofenceBrokerOverlap(geofenceBB, brokerAreas, stat)
+    stat.addSubscribeMessages()
 
     return actions.toString()
 }
 
-private fun calculatePublishActions(timestamp: Int, location: Location): String {
+private fun calculatePublishActions(timestamp: Int, location: Location, stat: Stats): String {
     val actions = StringBuilder()
 
     // temperature condition
-    if (getTrueWithChance(temperaturePublicationProbability)) {
-        actions.append("${timestamp + 4};${location.lat};${location.lon};publish;" + "$temperatureTopic;;" + "$temperaturePayloadSize\n")
-        addPublishMessages()
-        addPayloadSize(temperaturePayloadSize)
-    }
+    actions.append("${timestamp + 4};${location.lat};${location.lon};publish;" + "$temperatureTopic;;" + "$temperaturePayloadSize\n")
+    stat.addPublishMessages()
+    stat.addPayloadSize(temperaturePayloadSize)
 
     // humidity broadcast
-    if (getTrueWithChance(humidityPublicationProbability)) {
-        val payloadSize = Random.nextInt(minHumidityPayloadSize, maxHumidityPayloadSize)
-        actions.append("${timestamp + 5};${location.lat};${location.lon};publish;" + "$humidityTopic;;" + "$payloadSize\n")
-        addPayloadSize(payloadSize)
-        addPublishMessages()
-    }
+    var payloadSize = Random.nextInt(minHumidityPayloadSize, maxHumidityPayloadSize)
+    actions.append("${timestamp + 5};${location.lat};${location.lon};publish;" + "$humidityTopic;;" + "$payloadSize\n")
+    stat.addPayloadSize(payloadSize)
+    stat.addPublishMessages()
 
     // barometric pressure broadcast
-    if (getTrueWithChance(barometerPublicationProbability)) {
-        val payloadSize = Random.nextInt(minBarometerPayloadSize, maxBarometerPayloadSize)
-        actions.append("${timestamp + 6};${location.lat};${location.lon};publish;" + "$barometricPressureTopic;;$payloadSize\n")
-        addPayloadSize(payloadSize)
-        addPublishMessages()
-    }
+    payloadSize = Random.nextInt(minBarometerPayloadSize, maxBarometerPayloadSize)
+    actions.append("${timestamp + 6};${location.lat};${location.lon};publish;" + "$barometricPressureTopic;;$payloadSize\n")
+    stat.addPayloadSize(payloadSize)
+    stat.addPublishMessages()
     return actions.toString()
 }
 
